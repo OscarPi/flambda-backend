@@ -24,7 +24,20 @@ type line_number_state =
     source_files : Dwarf_value.t IntMap.t
   }
 
-type t = line_number_state ref
+type t =
+  { mutable current : line_number_state;
+    mutable checkpoint : line_number_state option
+  }
+
+let checkpoint t = t.checkpoint <- Some t.current
+
+let rollback t =
+  match t.checkpoint with
+  | None ->
+    failwith "debug_line section: attempting to rollback without a checkpoint"
+  | Some s ->
+    t.current <- s;
+    t.checkpoint <- None
 
 let rec range low high =
   if high < low
@@ -74,22 +87,29 @@ let max_special_opcode_operation_advance =
 
 (* Hopefully code_begin is the right symbol to use *)
 let create ~code_begin =
-  ref
-    { line_number_program =
-        [Set_address (Dwarf_value.code_address_from_symbol code_begin)];
-      address_reg = 0;
-      file_reg = 1;
-      line_reg = 1;
-      column_reg = 0;
-      discriminator_reg = 0;
-      source_files = IntMap.empty
-    }
+  { current =
+      { line_number_program =
+          [Set_address (Dwarf_value.code_address_from_symbol code_begin)];
+        address_reg = 0;
+        file_reg = 1;
+        line_reg = 1;
+        column_reg = 0;
+        discriminator_reg = 0;
+        source_files = IntMap.empty;
+      };
+    checkpoint = None
+  }
 
 let add_source_file t ~file_name ~file_num =
-  t
-    := { !t with
+  (match IntMap.find_opt file_num t.current.source_files with
+  | Some v -> failwith "debug_line section: multiple files with same number"
+  | None -> ());
+  t.current
+    <- { t.current with
          source_files =
-           IntMap.add file_num (Dwarf_value.string file_name) !t.source_files
+           IntMap.add file_num
+             (Dwarf_value.string file_name)
+             t.current.source_files
        }
 
 let maybe_add_set_column_instr col_int state =
@@ -236,35 +256,36 @@ let add_copy_instr_or_special_opcode_instr ~instr_address ~line state =
 let add_line_number_matrix_row t ~instr_address ~file_num ~line ~col
     ~discriminator =
   let desired_discriminator = Option.value discriminator ~default:0 in
-  if instr_address = !t.address_reg
-     && file_num = !t.file_reg && line = !t.line_reg && col = !t.column_reg
-     && desired_discriminator = !t.discriminator_reg
+  if instr_address = t.current.address_reg
+     && file_num = t.current.file_reg
+     && line = t.current.line_reg && col = t.current.column_reg
+     && desired_discriminator = t.current.discriminator_reg
   then ()
-  else if instr_address < !t.address_reg
+  else if instr_address < t.current.address_reg
   then
     failwith
       "attempt to add line number matrix row with an address lower than the \
        previous row"
   else
-    t
-      := maybe_add_set_file_instr file_num !t
+    t.current
+      <- maybe_add_set_file_instr file_num t.current
          |> maybe_add_set_column_instr col
          |> maybe_add_set_discriminator_instr desired_discriminator
          |> maybe_add_advance_line_instr line
          |> maybe_add_const_add_pc_instr ~instr_address ~line
          |> maybe_add_advance_pc_instr ~instr_address ~line
-         |> add_copy_instr_or_special_opcode_instr ~instr_address ~line
+         |> add_copy_instr_or_special_opcode_instr ~instr_address ~line)
 
 let file_names_size t =
   let ( + ) = Dwarf_int.add in
-  let max_binding = IntMap.max_binding_opt !t.source_files in
+  let max_binding = IntMap.max_binding_opt t.current.source_files in
   let max_index_opt = Option.map fst max_binding in
   let max_index = Option.value max_index_opt ~default:0 in
   let size =
     List.fold_left
       (fun size index ->
         size
-        + (match IntMap.find_opt index !t.source_files with
+        + (match IntMap.find_opt index t.current.source_files with
           | None -> Dwarf_value.size default_file_name
           | Some file_name -> Dwarf_value.size file_name)
         + Dwarf_value.size uleb128_zero
@@ -275,12 +296,12 @@ let file_names_size t =
   size + Dwarf_value.size null_byte
 
 let emit_file_names ~asm_directives t =
-  let max_binding = IntMap.max_binding_opt !t.source_files in
+  let max_binding = IntMap.max_binding_opt t.current.source_files in
   let max_index_opt = Option.map fst max_binding in
   let max_index = Option.value max_index_opt ~default:0 in
   List.iter
     (fun index ->
-      (match IntMap.find_opt index !t.source_files with
+      (match IntMap.find_opt index t.current.source_files with
       | None -> Dwarf_value.emit ~asm_directives default_file_name
       | Some file_name -> Dwarf_value.emit ~asm_directives file_name);
       (* Null terminate string *)
@@ -334,12 +355,12 @@ let line_number_program_size t =
   List.fold_left
     (fun size instr -> size + instr_size instr)
     (Dwarf_int.zero ())
-    (End_sequence :: !t.line_number_program)
+    (End_sequence :: t.current.line_number_program)
 
 let emit_line_number_program ~asm_directives t =
   List.iter
     (fun instr -> List.iter (Dwarf_value.emit ~asm_directives) (encode instr))
-    (List.rev (End_sequence :: !t.line_number_program))
+    (List.rev (End_sequence :: t.current.line_number_program))
 
 (* Value of the header_length field in the header. This is the size of the
    header minus the first three fields (DWARF-4 standard section 6.2.4)*)
