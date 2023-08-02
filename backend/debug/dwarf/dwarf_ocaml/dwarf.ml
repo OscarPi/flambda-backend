@@ -39,7 +39,7 @@ let create ~sourcefile ~unit_name ~asm_directives ~get_file_id ~code_begin
       ~code_begin ~code_end
   in
   let compilation_unit_header_label = Asm_label.create (DWARF Debug_info) in
-  let debug_line_section = Debug_line_section.create ~code_begin in
+  let debug_line_section = Debug_line_section.create () in
   let state =
     DS.create ~compilation_unit_header_label ~compilation_unit_proto_die
       ~debug_line_section
@@ -55,10 +55,15 @@ let dwarf_for_source_file t ~file_name ~file_num =
   Debug_line_section.add_source_file debug_line_section ~file_name ~file_num
 
 let dwarf_for_line_number_matrix_row t ~instr_address ~file_num ~line ~col
-    ~discriminator =
+    ~discriminator ~section_name =
   let debug_line_section = DS.debug_line_section t.state in
   Debug_line_section.add_line_number_matrix_row debug_line_section
-    ~instr_address ~file_num ~line ~col ~discriminator
+    ~instr_address ~file_num ~line ~col ~discriminator ~section_name
+
+let register_code_section t ~symbol ~section_name =
+  Debug_line_section.register_code_section
+    (DS.debug_line_section t.state)
+    ~symbol ~section_name
 
 let debug_line_checkpoint t =
   Debug_line_section.checkpoint (DS.debug_line_section t.state)

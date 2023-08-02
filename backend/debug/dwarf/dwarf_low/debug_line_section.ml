@@ -13,6 +13,7 @@ type line_number_program_instr =
   | Set_discriminator of Dwarf_value.t
 
 module IntMap = Map.Make (Int)
+module StringMap = Map.Make (String)
 
 type line_number_state =
   { line_number_program : line_number_program_instr list;
@@ -21,7 +22,9 @@ type line_number_state =
     line_reg : int;
     column_reg : int;
     discriminator_reg : int;
-    source_files : Dwarf_value.t IntMap.t
+    source_files : Dwarf_value.t IntMap.t;
+    sections : Asm_symbol.t StringMap.t;
+    current_section : string option
   }
 
 type t =
@@ -85,17 +88,17 @@ let null_byte = Dwarf_value.uint8 Numbers.Uint8.zero
 let max_special_opcode_operation_advance =
   (255 - opcode_base_int) / line_range_int
 
-(* Hopefully code_begin is the right symbol to use *)
-let create ~code_begin =
+let create () =
   { current =
-      { line_number_program =
-          [Set_address (Dwarf_value.code_address_from_symbol code_begin)];
+      { line_number_program = [];
         address_reg = 0;
         file_reg = 1;
         line_reg = 1;
         column_reg = 0;
         discriminator_reg = 0;
         source_files = IntMap.empty;
+        sections = StringMap.empty;
+        current_section = None
       };
     checkpoint = None
   }
@@ -251,30 +254,57 @@ let add_copy_instr_or_special_opcode_instr ~instr_address ~line state =
       line_reg = line
     }
 
+let maybe_switch_section ~section_name state =
+  if Option.is_some state.current_section
+     && Option.get state.current_section = section_name
+  then state
+  else
+    let symbol_opt = StringMap.find_opt section_name state.sections in
+    match symbol_opt with
+    | None -> failwith "debug_line section: unregistered code section"
+    | Some symbol ->
+      { state with
+        current_section = Some section_name;
+        line_number_program =
+          Set_address (Dwarf_value.code_address_from_symbol symbol)
+          :: state.line_number_program;
+        address_reg = 0
+      }
+
 (* If this row is identical to the last row we added, we do nothing: we do not
    add a duplicate row. *)
 let add_line_number_matrix_row t ~instr_address ~file_num ~line ~col
-    ~discriminator =
+    ~discriminator ~section_name =
   let desired_discriminator = Option.value discriminator ~default:0 in
   if instr_address = t.current.address_reg
      && file_num = t.current.file_reg
      && line = t.current.line_reg && col = t.current.column_reg
      && desired_discriminator = t.current.discriminator_reg
+     && Option.is_some t.current.current_section
+     && section_name = Option.get t.current.current_section
   then ()
-  else if instr_address < t.current.address_reg
-  then
-    failwith
-      "attempt to add line number matrix row with an address lower than the \
-       previous row"
-  else
-    t.current
-      <- maybe_add_set_file_instr file_num t.current
-         |> maybe_add_set_column_instr col
-         |> maybe_add_set_discriminator_instr desired_discriminator
-         |> maybe_add_advance_line_instr line
-         |> maybe_add_const_add_pc_instr ~instr_address ~line
-         |> maybe_add_advance_pc_instr ~instr_address ~line
-         |> add_copy_instr_or_special_opcode_instr ~instr_address ~line)
+  else (
+    t.current <- maybe_switch_section ~section_name t.current;
+    if instr_address < t.current.address_reg
+    then
+      failwith
+        "attempt to add line number matrix row with an address lower than the \
+         previous row"
+    else
+      t.current
+        <- maybe_add_set_file_instr file_num t.current
+           |> maybe_add_set_column_instr col
+           |> maybe_add_set_discriminator_instr desired_discriminator
+           |> maybe_add_advance_line_instr line
+           |> maybe_add_const_add_pc_instr ~instr_address ~line
+           |> maybe_add_advance_pc_instr ~instr_address ~line
+           |> add_copy_instr_or_special_opcode_instr ~instr_address ~line)
+
+let register_code_section t ~symbol ~section_name =
+  t.current
+    <- { t.current with
+         sections = StringMap.add section_name symbol t.current.sections
+       }
 
 let file_names_size t =
   let ( + ) = Dwarf_int.add in

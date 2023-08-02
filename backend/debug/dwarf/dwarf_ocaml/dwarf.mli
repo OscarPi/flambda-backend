@@ -43,7 +43,11 @@ val dwarf_for_line_number_matrix_row :
   line:int ->
   col:int ->
   discriminator:int option ->
+  section_name:string ->
   unit
+
+val register_code_section :
+  t -> symbol:Asm_symbol.t -> section_name:string -> unit
 
 val debug_line_checkpoint : t -> unit
 

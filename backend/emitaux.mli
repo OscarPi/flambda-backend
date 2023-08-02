@@ -118,6 +118,8 @@ module Dwarf_helpers : sig
     -> file_emitter:(file_num:int -> file_name:string -> unit)
     -> unit
 
+  val register_code_section : label_name:string -> section_name:string -> unit
+
   val emit_dwarf : unit -> unit
 
   val record_dwarf_for_fundecl : fun_name:string -> Debuginfo.t -> Cmm.label option
@@ -131,6 +133,7 @@ module Dwarf_helpers : sig
     -> line : int
     -> col : int
     -> discriminator : int option
+    -> section_name : string
     -> unit
 
   val debug_line_checkpoint : unit -> unit

@@ -1620,7 +1620,7 @@ let assemble_instr b loc = function
   | XOR (src, dst) -> emit_XOR b dst src
   | XORPD (src, dst) -> emit_xorpd b dst src
 
-let assemble_line b loc ins =
+let assemble_line b loc section_name ins =
   try
     match ins with
     | Ins instr ->
@@ -1659,7 +1659,7 @@ let assemble_line b loc ins =
     | Loc { file_num; line; col; discriminator } ->
         let instr_address = Buffer.length b.buf in
         Emitaux.Dwarf_helpers.record_dwarf_for_line_number_matrix_row ~instr_address
-          ~file_num ~line ~col ~discriminator
+          ~file_num ~line ~col ~discriminator ~section_name
     | Private_extern _ -> assert false
     | Indirect_symbol _ -> assert false
     | Type (lbl, kind) -> (get_symbol b lbl).sy_type <- Some kind
@@ -1748,7 +1748,7 @@ let assemble_section arch section =
     Emitaux.Dwarf_helpers.debug_line_checkpoint ();
 
     let loc = ref 0 in
-    ArrayLabels.iter ~f:(assemble_line b loc) section.sec_instrs;
+    ArrayLabels.iter ~f:(assemble_line b loc section.sec_name) section.sec_instrs;
 
     let retry = ref false in
 

@@ -463,6 +463,12 @@ module Dwarf_helpers = struct
                        ~get_file_id:(get_file_num ~file_emitter)
                        ~code_begin ~code_end)
 
+  let register_code_section ~label_name ~section_name =
+    match !dwarf with
+    | None -> ()
+    | Some dwarf ->
+      Dwarf.register_code_section dwarf ~symbol:(Asm_targets.Asm_symbol.create label_name) ~section_name
+
   let reset_dwarf () =
     dwarf := None;
     sourcefile_for_dwarf := None
@@ -507,11 +513,11 @@ module Dwarf_helpers = struct
     | Some dwarf -> Dwarf.dwarf_for_source_file dwarf ~file_name ~file_num
 
   let record_dwarf_for_line_number_matrix_row ~instr_address ~file_num ~line ~col
-      ~discriminator =
+      ~discriminator ~section_name =
     match !dwarf with
     | None -> ()
     | Some dwarf -> Dwarf.dwarf_for_line_number_matrix_row dwarf ~instr_address
-      ~file_num ~line ~col ~discriminator
+      ~file_num ~line ~col ~discriminator ~section_name
 
   let debug_line_checkpoint () =
     match !dwarf with
